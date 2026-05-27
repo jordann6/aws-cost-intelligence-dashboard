@@ -1,6 +1,7 @@
 # Terraform
 .terraform/
 *.tfplan
+*.plan
 terraform/*.zip
 
 # Frontend

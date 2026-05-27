@@ -2,6 +2,13 @@
 
 Terraform-managed AWS cost visibility platform that ingests Cost Explorer data into DynamoDB daily, runs z-score anomaly detection and 14-day linear regression forecasting, and surfaces results through a React frontend served via S3 and CloudFront. Three separate Lambda execution roles enforce least-privilege access at each layer.
 
+## Live Demo
+
+| | |
+|---|---|
+| **Dashboard** | https://d14t0xtekufzdr.cloudfront.net |
+| **API** | https://nb43vilrub.execute-api.us-east-1.amazonaws.com |
+
 ## Architecture
 
 ![Architecture](docs/architecture.png)
