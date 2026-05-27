@@ -1,0 +1,12 @@
+# Terraform
+.terraform/
+*.tfplan
+terraform/*.zip
+
+# Frontend
+node_modules/
+frontend/dist/
+
+# Diagram
+__pycache__/
+*.pyc
