@@ -25,3 +25,7 @@ output "ingester_function_name" {
 output "analyzer_function_name" {
   value = aws_lambda_function.analyzer.function_name
 }
+
+output "llm_ingester_function_name" {
+  value = aws_lambda_function.llm_ingester.function_name
+}

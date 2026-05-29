@@ -27,11 +27,15 @@ with Diagram(
     graph_attr=graph_attrs,
     node_attr=node_attrs,
 ):
-    scheduler = Eventbridge("EventBridge Scheduler\nIngest 01:00 · Analyze 02:00 UTC")
+    scheduler = Eventbridge("EventBridge Scheduler\nLLM 00:30 · Ingest 01:00 · Analyze 02:00 UTC")
+
+    with Cluster("External · LLM Gateway"):
+        llm_db = Dynamodb("DynamoDB\nrequest-log table\nprovider · estimated_cost_cents")
 
     with Cluster("AWS · us-east-1"):
 
         with Cluster("Data Pipeline"):
+            llm_ingester = Lambda("LLM Ingester Lambda\nAggregates LLM API spend\nby provider from gateway")
             ingester = Lambda("Ingester Lambda\nCost Explorer API\nTag Compliance Scan")
             analyzer = Lambda("Analyzer Lambda\nZ-Score Anomaly Detection\n14-Day Linear Regression")
 
@@ -46,8 +50,11 @@ with Diagram(
             cf = CloudFront("CloudFront\nOAC · HTTPS Redirect\nSPA Fallback")
             s3_ui = S3("S3 Bucket\nStatic Assets")
 
+    scheduler >> Edge(label="00:30 UTC") >> llm_ingester
     scheduler >> Edge(label="01:00 UTC") >> ingester
     scheduler >> Edge(label="02:00 UTC") >> analyzer
+    llm_db >> Edge(label="scan") >> llm_ingester
+    llm_ingester >> Edge(label="write LLM/Provider") >> db
     ingester >> Edge(label="write") >> db
     analyzer >> Edge(label="read / write") >> db
     analyzer >> Edge(label="anomaly alert") >> alerts

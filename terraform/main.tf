@@ -253,6 +253,7 @@ data "aws_iam_policy_document" "scheduler_invoke" {
     resources = [
       aws_lambda_function.ingester.arn,
       aws_lambda_function.analyzer.arn,
+      aws_lambda_function.llm_ingester.arn,
     ]
   }
 }
@@ -351,6 +352,83 @@ resource "aws_lambda_permission" "api_gateway" {
   function_name = aws_lambda_function.api.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.dashboard.execution_arn}/*/*"
+}
+
+# --- LLM Gateway Cost Ingester -----------------------------------------------
+
+data "aws_caller_identity" "current" {}
+
+locals {
+  llm_gateway_table_arn = "arn:aws:dynamodb:${var.region}:${data.aws_caller_identity.current.account_id}:table/${var.llm_gateway_table_name}"
+}
+
+resource "aws_iam_role" "llm_ingester" {
+  name               = "role-${local.project}-llm-ingester-${local.environment}"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = local.common_tags
+}
+
+data "aws_iam_policy_document" "llm_ingester" {
+  statement {
+    actions   = ["dynamodb:Scan"]
+    resources = [local.llm_gateway_table_arn]
+  }
+  statement {
+    actions   = ["dynamodb:PutItem", "dynamodb:BatchWriteItem"]
+    resources = [aws_dynamodb_table.dashboard.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "llm_ingester" {
+  name   = "llm-ingester-policy"
+  role   = aws_iam_role.llm_ingester.id
+  policy = data.aws_iam_policy_document.llm_ingester.json
+}
+
+resource "aws_iam_role_policy_attachment" "llm_ingester_basic" {
+  role       = aws_iam_role.llm_ingester.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+data "archive_file" "llm_ingester" {
+  type        = "zip"
+  source_file = "${path.module}/../lambda/llm_ingester.py"
+  output_path = "${path.module}/llm_ingester.zip"
+}
+
+resource "aws_lambda_function" "llm_ingester" {
+  function_name    = "lambda-${local.project}-llm-ingester-${local.environment}"
+  role             = aws_iam_role.llm_ingester.arn
+  handler          = "llm_ingester.handler"
+  runtime          = "python3.12"
+  timeout          = 120
+  filename         = data.archive_file.llm_ingester.output_path
+  source_code_hash = data.archive_file.llm_ingester.output_base64sha256
+
+  environment {
+    variables = {
+      TABLE_NAME              = aws_dynamodb_table.dashboard.name
+      LLM_GATEWAY_TABLE_NAME  = var.llm_gateway_table_name
+      AWS_REGION_VAR          = var.region
+    }
+  }
+
+  tags = local.common_tags
+}
+
+# Runs at 00:30 UTC — before the AWS cost ingester at 01:00 UTC
+resource "aws_scheduler_schedule" "llm_ingest" {
+  name       = "daily-llm-ingest"
+  group_name = aws_scheduler_schedule_group.dashboard.name
+
+  flexible_time_window { mode = "OFF" }
+  schedule_expression          = "cron(30 0 * * ? *)"
+  schedule_expression_timezone = "UTC"
+
+  target {
+    arn      = aws_lambda_function.llm_ingester.arn
+    role_arn = aws_iam_role.scheduler.arn
+  }
 }
 
 # --- S3 + CloudFront (React Frontend) ----------------------------------------

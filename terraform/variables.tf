@@ -21,3 +21,9 @@ variable "required_tags" {
   type        = list(string)
   default     = ["Environment", "Project", "ManagedBy"]
 }
+
+variable "llm_gateway_table_name" {
+  description = "Name of the LLM gateway request log DynamoDB table to pull cost data from."
+  type        = string
+  default     = "llm-gateway-dev-request-log"
+}

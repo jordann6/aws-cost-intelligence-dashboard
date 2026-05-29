@@ -1,6 +1,6 @@
 # AWS Cost Intelligence Dashboard
 
-Terraform-managed AWS cost visibility platform that ingests Cost Explorer data into DynamoDB daily, runs z-score anomaly detection and 14-day linear regression forecasting, and surfaces results through a React frontend served via S3 and CloudFront. Three separate Lambda execution roles enforce least-privilege access at each layer.
+Terraform-managed AWS cost visibility platform that ingests Cost Explorer data and LLM API spend into DynamoDB daily, runs z-score anomaly detection and 14-day linear regression forecasting across all cost sources, and surfaces results through a React frontend served via S3 and CloudFront. Four separate Lambda execution roles enforce least-privilege access at each layer.
 
 ## Live Demo
 
@@ -15,10 +15,12 @@ Terraform-managed AWS cost visibility platform that ingests Cost Explorer data i
 
 | Component | Resource | Purpose |
 |---|---|---|
-| EventBridge Scheduler | `daily-ingest` (01:00 UTC) | Triggers cost ingestion |
+| EventBridge Scheduler | `daily-llm-ingest` (00:30 UTC) | Triggers LLM API cost ingestion |
+| EventBridge Scheduler | `daily-ingest` (01:00 UTC) | Triggers AWS Cost Explorer ingestion |
 | EventBridge Scheduler | `daily-analyze` (02:00 UTC) | Triggers anomaly detection + forecast |
+| Lambda LLM Ingester | `lambda-cost-dashboard-llm-ingester-{env}` | Scans LLM Gateway request log, aggregates spend by provider, writes `LLM/Openai` and `LLM/Anthropic` DAILY records |
 | Lambda Ingester | `lambda-cost-dashboard-ingester-{env}` | Pulls Cost Explorer data + scans tag compliance |
-| Lambda Analyzer | `lambda-cost-dashboard-analyzer-{env}` | Z-score anomaly detection, linear regression forecast |
+| Lambda Analyzer | `lambda-cost-dashboard-analyzer-{env}` | Z-score anomaly detection, linear regression forecast across all services including LLM providers |
 | Lambda API | `lambda-cost-dashboard-api-{env}` | Serves `/costs`, `/anomalies`, `/forecast`, `/tags` |
 | DynamoDB | `cost-dashboard-{env}` | Single-table store for all record types |
 | API Gateway | HTTP API | REST interface for the frontend |
@@ -27,12 +29,13 @@ Terraform-managed AWS cost visibility platform that ingests Cost Explorer data i
 
 ## Features
 
-- **Cost ingestion** — 90-day rolling window from Cost Explorer API, grouped by service, stored daily
-- **Z-score anomaly detection** — flags services where spend deviates >2.5σ from their 30-day rolling baseline
-- **14-day linear regression forecast** — projects total daily spend based on observed trend
+- **LLM API cost ingestion** — scans the LLM Gateway's DynamoDB request log daily, aggregates `estimated_cost_cents` by provider (OpenAI, Anthropic), and writes `LLM/Provider` records into the same DAILY partition as AWS service costs; anomaly detection and forecasting run on LLM spend automatically
+- **AWS cost ingestion** — 90-day rolling window from Cost Explorer API, grouped by service, stored daily
+- **Z-score anomaly detection** — flags any service, including LLM providers, where spend deviates >2.5σ from its 30-day rolling baseline
+- **14-day linear regression forecast** — projects total daily spend across all cost sources based on observed trend
 - **Tag compliance scanning** — surfaces resources missing required tags (`Environment`, `Project`, `ManagedBy`)
 - **SNS alerts** — email notification on every anomaly detection run that finds outliers
-- **Three IAM execution roles** — ingester, analyzer, and API each have the minimum permissions required
+- **Four IAM execution roles** — llm-ingester, ingester, analyzer, and API each have the minimum permissions required
 - **React frontend** — cost trend chart, forecast chart, anomaly feed, tag compliance table; served from S3 via CloudFront with OAC (no public bucket access)
 - **OIDC CI/CD** — GitHub Actions deploys Terraform then builds and syncs the frontend; no stored credentials
 
@@ -61,17 +64,22 @@ terraform apply -var="alert_email=you@example.com"
 
 ## Seed Data (Manual Run)
 
-After deploy, run the ingester and analyzer manually to populate DynamoDB before the scheduled jobs fire:
+After deploy, run all three ingesters and the analyzer manually to populate DynamoDB before the scheduled jobs fire:
 
 ```bash
+LLM_INGESTER=$(terraform output -raw llm_ingester_function_name)
 INGESTER=$(terraform output -raw ingester_function_name)
 ANALYZER=$(terraform output -raw analyzer_function_name)
 
-# Ingest 90 days of cost data
+# Ingest yesterday's LLM API spend from the gateway request log
+aws lambda invoke --function-name "$LLM_INGESTER" --payload '{}' /tmp/llm_ingest.json
+cat /tmp/llm_ingest.json
+
+# Ingest 90 days of AWS Cost Explorer data
 aws lambda invoke --function-name "$INGESTER" --payload '{}' /tmp/ingest.json
 cat /tmp/ingest.json
 
-# Run anomaly detection + forecasting
+# Run anomaly detection + forecasting across all cost sources
 aws lambda invoke --function-name "$ANALYZER" --payload '{}' /tmp/analyze.json
 cat /tmp/analyze.json
 ```
@@ -94,6 +102,7 @@ VITE_API_URL=$(cd ../terraform && terraform output -raw api_url) npm run dev
 | `environment` | `dev` | Environment tag suffix |
 | `alert_email` | `""` | SNS email subscription — leave empty to disable |
 | `required_tags` | `["Environment","Project","ManagedBy"]` | Tags required for compliance |
+| `llm_gateway_table_name` | `llm-gateway-dev-request-log` | DynamoDB request log table name from the LLM Gateway project |
 
 ## CI/CD
 
@@ -115,16 +124,17 @@ Push to `main` runs Terraform then builds and deploys the frontend. Pull request
 | `frontend_bucket` | S3 bucket name for static assets |
 | `cloudfront_distribution_id` | CloudFront distribution ID |
 | `dynamodb_table_name` | DynamoDB table name |
+| `llm_ingester_function_name` | LLM Ingester Lambda name |
 | `ingester_function_name` | Ingester Lambda name |
 | `analyzer_function_name` | Analyzer Lambda name |
 
 ## Tech Stack
 
 - **Terraform** `>= 1.6` · `aws ~> 5.0` · `random ~> 3.0` · `archive ~> 2.0`
-- **AWS Lambda** (Python 3.12) — ingester, analyzer, API; stdlib only (boto3, statistics)
+- **AWS Lambda** (Python 3.12) — llm-ingester, ingester, analyzer, API; stdlib only (boto3, statistics)
 - **AWS DynamoDB** — PAY_PER_REQUEST, single-table design
 - **AWS API Gateway** — HTTP API with CORS
-- **AWS EventBridge Scheduler** — two daily schedules, dedicated IAM invoke role
+- **AWS EventBridge Scheduler** — three daily schedules (00:30, 01:00, 02:00 UTC), dedicated IAM invoke role
 - **AWS SNS** — anomaly alert email subscription
 - **AWS S3 + CloudFront** — React frontend with Origin Access Control
 - **React** + **Vite** + **recharts** — cost trend, forecast, anomaly, and tag compliance views
