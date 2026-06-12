@@ -1,5 +1,7 @@
 # AWS Cost Intelligence Dashboard
 
+[![Validate](https://github.com/jordann6/aws-cost-intelligence-dashboard/actions/workflows/validate.yml/badge.svg)](https://github.com/jordann6/aws-cost-intelligence-dashboard/actions/workflows/validate.yml)
+
 Terraform-managed AWS cost visibility platform that ingests Cost Explorer data and LLM API spend into DynamoDB daily, runs z-score anomaly detection and 14-day linear regression forecasting across all cost sources, and surfaces results through a React frontend served via S3 and CloudFront. Four separate Lambda execution roles enforce least-privilege access at each layer.
 
 ## Deployment Status
