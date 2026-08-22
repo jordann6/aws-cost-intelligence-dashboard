@@ -18,21 +18,27 @@ Infrastructure is provisioned on demand and torn down after demos to keep AWS sp
 | EventBridge Scheduler | `daily-ingest` (01:00 UTC) | Triggers AWS Cost Explorer ingestion |
 | EventBridge Scheduler | `daily-analyze` (02:00 UTC) | Triggers anomaly detection + forecast |
 | Lambda LLM Ingester | `lambda-cost-dashboard-llm-ingester-{env}` | Scans LLM Gateway request log, aggregates spend by provider, writes `LLM/Openai` and `LLM/Anthropic` DAILY records |
-| Lambda Ingester | `lambda-cost-dashboard-ingester-{env}` | Pulls Cost Explorer data + scans tag compliance |
+| Lambda Ingester | `lambda-cost-dashboard-ingester-{env}` | Pulls Cost Explorer data (by service + by `TAG:Project`), RI/Savings Plans coverage, scans EC2 for waste, scans tag compliance |
 | Lambda Analyzer | `lambda-cost-dashboard-analyzer-{env}` | Z-score anomaly detection, linear regression forecast across all services including LLM providers |
-| Lambda API | `lambda-cost-dashboard-api-{env}` | Serves `/costs`, `/anomalies`, `/forecast`, `/tags` |
-| DynamoDB | `cost-dashboard-{env}` | Single-table store for all record types |
+| Lambda API | `lambda-cost-dashboard-api-{env}` | Serves `/costs`, `/costs-by-tag`, `/coverage`, `/waste`, `/anomalies`, `/forecast`, `/tags` |
+| DynamoDB | `cost-dashboard-{env}` | Single-table store (`DAILY`, `DAILY_TAG`, `COVERAGE`, `WASTE`, `ANOMALY`, `FORECAST`, `TAG_ISSUE`) |
 | API Gateway | HTTP API | REST interface for the frontend |
-| SNS | `cost-dashboard-alerts-{env}` | Email alerts on anomaly detection |
+| Budgets | `cost-dashboard-monthly-{env}` | Monthly budget, alerts at 80% actual / 100% forecast to SNS |
+| SNS | `cost-dashboard-alerts-{env}` | Email alerts on anomaly detection and budget breaches |
 | S3 + CloudFront | `cost-dashboard-ui-{env}-{suffix}` | React frontend with OAC |
 
 ## Features
 
 - **LLM API cost ingestion** — scans the LLM Gateway's DynamoDB request log daily, aggregates `estimated_cost_cents` by provider (OpenAI, Anthropic), and writes `LLM/Provider` records into the same DAILY partition as AWS service costs; anomaly detection and forecasting run on LLM spend automatically
 - **AWS cost ingestion** — 90-day rolling window from Cost Explorer API, grouped by service, stored daily
+- **Cost allocation by owner** — a second Cost Explorer query groups the same 90-day window by the `Project` cost allocation tag, so the dashboard answers "what does each project/owner cost," not just "what does each service cost." Untagged spend surfaces as its own row
 - **Z-score anomaly detection** — flags any service, including LLM providers, where spend deviates >2.5σ from its 30-day rolling baseline
+- **Native Cost Anomaly Detection** — an AWS-managed `SERVICE` anomaly monitor runs alongside the custom analyzer and publishes to the same SNS topic, so detection does not depend on a single detector
+- **Monthly budget** — AWS Budgets alerts at 80% of actual and 100% of forecast monthly spend
+- **RI / Savings Plans coverage** — daily coverage percentages surfaced so low coverage on steady-state spend is visible
+- **Waste scan** — flags unattached EBS volumes, unassociated Elastic IPs, and legacy gp2 volumes (gp3 is ~20% cheaper), each with an estimated monthly dollar cost
 - **14-day linear regression forecast** — projects total daily spend across all cost sources based on observed trend
-- **Tag compliance scanning** — surfaces resources missing required tags (`Environment`, `Project`, `ManagedBy`)
+- **Tag compliance scanning** — surfaces resources missing required tags (`Environment`, `Project`, `ManagedBy`, `CostCenter`). Provider-level `default_tags` applies the canonical TitleCase tag set to every resource so nothing is created untagged
 - **SNS alerts** — email notification on every anomaly detection run that finds outliers
 - **Four IAM execution roles** — llm-ingester, ingester, analyzer, and API each have the minimum permissions required
 - **React frontend** — cost trend chart, forecast chart, anomaly feed, tag compliance table; served from S3 via CloudFront with OAC (no public bucket access)
@@ -59,6 +65,24 @@ terraform plan -var="alert_email=you@example.com"
 
 # Apply
 terraform apply -var="alert_email=you@example.com"
+```
+
+### Account-constrained features (opt-in)
+
+Two FinOps controls depend on account state, so they default **off** and are enabled with a variable once the account is ready:
+
+| Variable | Default | Why it is gated |
+|---|---|---|
+| `enable_cost_allocation_tag_activation` | `false` | `aws_ce_cost_allocation_tag` only activates a tag key Cost Explorer has already seen in billing data. On a fresh deploy it fails with `Tag keys not found`. Enable in a second apply once the tags have propagated (up to ~24h). |
+| `enable_native_anomaly_monitor` | `false` | AWS allows only one **dimensional** (`SERVICE`) anomaly monitor per account. If one already exists, creation fails with `Limit exceeded`. The custom z-score analyzer and the budget still provide detection. |
+
+The tags themselves are always applied (provider `default_tags`), and `/costs-by-tag` still works — untagged spend surfaces under `No Project` until activation completes.
+
+```bash
+# Once the tags have propagated and if no other SERVICE monitor exists:
+terraform apply -var="alert_email=you@example.com" \
+  -var="enable_cost_allocation_tag_activation=true" \
+  -var="enable_native_anomaly_monitor=true"
 ```
 
 ## Seed Data (Manual Run)

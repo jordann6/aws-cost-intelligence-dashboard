@@ -27,4 +27,17 @@ terraform {
 
 provider "aws" {
   region = var.region
+
+  # FinOps: every resource inherits these; nothing can be created untagged.
+  # Keys are TitleCase to match the required_tags compliance list exactly.
+  default_tags {
+    tags = {
+      Project     = "cost-dashboard"
+      Environment = var.environment
+      Owner       = "jordann6"
+      ManagedBy   = "terraform"
+      CostCenter  = var.cost_center
+      Team        = var.team
+    }
+  }
 }

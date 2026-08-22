@@ -61,6 +61,22 @@ def handler(event, context):
         )
         return ok(resp.get("Items", []))
 
+    if path == "/costs-by-tag":
+        today = date.today().strftime("%Y-%m-%d")
+        start = (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")
+        resp = table.query(
+            KeyConditionExpression=Key("pk").eq("DAILY_TAG") & Key("sk").between(f"{start}#", f"{today}#~")
+        )
+        return ok(resp.get("Items", []))
+
+    if path == "/coverage":
+        resp = table.query(KeyConditionExpression=Key("pk").eq("COVERAGE"))
+        return ok(resp.get("Items", []))
+
+    if path == "/waste":
+        resp = table.query(KeyConditionExpression=Key("pk").eq("WASTE"), Limit=100)
+        return ok(resp.get("Items", []))
+
     return {
         "statusCode": 404,
         "headers": {**CORS, "Content-Type": "application/json"},

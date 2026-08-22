@@ -3,6 +3,8 @@ import CostChart from './components/CostChart'
 import ForecastChart from './components/ForecastChart'
 import AnomalyFeed from './components/AnomalyFeed'
 import TagCompliance from './components/TagCompliance'
+import CostByTag from './components/CostByTag'
+import Optimization from './components/Optimization'
 
 const API = import.meta.env.VITE_API_URL || ''
 
@@ -27,7 +29,11 @@ export default function App() {
       fetch(`${API}/forecast`).then(r => r.json()).catch(() => []),
       fetch(`${API}/anomalies`).then(r => r.json()).catch(() => []),
       fetch(`${API}/tags`).then(r => r.json()).catch(() => []),
-    ]).then(([costs, forecast, anomalies, tags]) => setData({ costs, forecast, anomalies, tags }))
+      fetch(`${API}/costs-by-tag`).then(r => r.json()).catch(() => []),
+      fetch(`${API}/coverage`).then(r => r.json()).catch(() => []),
+      fetch(`${API}/waste`).then(r => r.json()).catch(() => []),
+    ]).then(([costs, forecast, anomalies, tags, costsByTag, coverage, waste]) =>
+      setData({ costs, forecast, anomalies, tags, costsByTag, coverage, waste }))
   }, [])
 
   if (!data) return <div style={s.loading}>Loading...</div>
@@ -47,6 +53,16 @@ export default function App() {
           <p style={s.label}>14-Day Forecast</p>
           <ForecastChart data={data.forecast} />
         </section>
+        <div style={s.row}>
+          <section style={{ ...s.card, flex: 1, minWidth: 0 }}>
+            <p style={s.label}>Spend by Owner (30d · tag: Project)</p>
+            <CostByTag data={data.costsByTag} />
+          </section>
+          <section style={{ ...s.card, flex: 1, minWidth: 0 }}>
+            <p style={s.label}>Optimization · Coverage &amp; Waste</p>
+            <Optimization coverage={data.coverage} waste={data.waste} />
+          </section>
+        </div>
         <div style={s.row}>
           <section style={{ ...s.card, flex: 1, minWidth: 0 }}>
             <p style={s.label}>Anomalies</p>

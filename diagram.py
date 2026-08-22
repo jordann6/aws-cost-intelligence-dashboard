@@ -2,6 +2,7 @@ from diagrams import Diagram, Cluster, Edge
 from diagrams.aws.compute import Lambda
 from diagrams.aws.database import Dynamodb
 from diagrams.aws.integration import Eventbridge, SNS
+from diagrams.aws.cost import CostExplorer, Budgets
 from diagrams.aws.network import APIGateway, CloudFront
 from diagrams.aws.storage import S3
 
@@ -34,16 +35,20 @@ with Diagram(
 
     with Cluster("AWS · us-east-1"):
 
+        with Cluster("Cost & Optimization Sources"):
+            ce = CostExplorer("Cost Explorer\nby service · by TAG:Project\nRI / Savings Plans coverage")
+            budget = Budgets("AWS Budgets\n80% actual · 100% forecast")
+
         with Cluster("Data Pipeline"):
             llm_ingester = Lambda("LLM Ingester Lambda\nAggregates LLM API spend\nby provider from gateway")
-            ingester = Lambda("Ingester Lambda\nCost Explorer API\nTag Compliance Scan")
+            ingester = Lambda("Ingester Lambda\nService + tag-grouped cost\nCoverage · Waste scan · Tag compliance")
             analyzer = Lambda("Analyzer Lambda\nZ-Score Anomaly Detection\n14-Day Linear Regression")
 
-        db = Dynamodb("DynamoDB\nSingle Table\nDAILY · ANOMALY · FORECAST · TAG_ISSUE")
-        alerts = SNS("SNS Topic\nAnomaly Alerts")
+        db = Dynamodb("DynamoDB\nSingle Table\nDAILY · DAILY_TAG · COVERAGE\nWASTE · ANOMALY · FORECAST · TAG_ISSUE")
+        alerts = SNS("SNS Topic\nAnomaly + Budget Alerts")
 
         with Cluster("API Layer"):
-            apigw = APIGateway("API Gateway\nHTTP API · CORS Enabled\n/costs  /anomalies  /forecast  /tags")
+            apigw = APIGateway("API Gateway · HTTP API · CORS\n/costs /costs-by-tag /coverage\n/waste /anomalies /forecast /tags")
             api_fn = Lambda("API Lambda\nREST Handler")
 
         with Cluster("React Frontend"):
@@ -54,10 +59,12 @@ with Diagram(
     scheduler >> Edge(label="01:00 UTC") >> ingester
     scheduler >> Edge(label="02:00 UTC") >> analyzer
     llm_db >> Edge(label="scan") >> llm_ingester
+    ce >> Edge(label="cost + coverage") >> ingester
     llm_ingester >> Edge(label="write LLM/Provider") >> db
     ingester >> Edge(label="write") >> db
     analyzer >> Edge(label="read / write") >> db
     analyzer >> Edge(label="anomaly alert") >> alerts
+    budget >> Edge(label="threshold breach", color="firebrick") >> alerts
     db >> Edge(label="read") >> api_fn
     apigw >> api_fn
     cf >> s3_ui

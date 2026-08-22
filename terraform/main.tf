@@ -3,11 +3,16 @@ locals {
   environment = var.environment
   region      = var.region
 
+  # Keys are TitleCase to match required_tags and provider default_tags.
+  # Provider default_tags already applies these account-wide; kept here so
+  # per-resource tags stay identical (no lowercase duplicate keys).
   common_tags = {
-    project     = local.project
-    environment = local.environment
-    owner       = "jordann6"
-    managed_by  = "terraform"
+    Project     = local.project
+    Environment = local.environment
+    Owner       = "jordann6"
+    ManagedBy   = "terraform"
+    CostCenter  = var.cost_center
+    Team        = var.team
   }
 }
 
@@ -68,11 +73,20 @@ resource "aws_iam_role" "ingester" {
 
 data "aws_iam_policy_document" "ingester" {
   statement {
-    actions   = ["ce:GetCostAndUsage"]
+    actions = [
+      "ce:GetCostAndUsage",
+      "ce:GetReservationCoverage",
+      "ce:GetSavingsPlansCoverage",
+    ]
     resources = ["*"]
   }
   statement {
     actions   = ["tag:GetResources"]
+    resources = ["*"]
+  }
+  # Read-only describes for the waste scan (idle EBS / EIP, gp2 volumes).
+  statement {
+    actions   = ["ec2:DescribeVolumes", "ec2:DescribeAddresses"]
     resources = ["*"]
   }
   statement {
@@ -181,6 +195,7 @@ resource "aws_lambda_function" "ingester" {
     variables = {
       TABLE_NAME    = aws_dynamodb_table.dashboard.name
       REQUIRED_TAGS = jsonencode(var.required_tags)
+      COST_TAG_KEY  = "Project"
     }
   }
 
@@ -346,6 +361,24 @@ resource "aws_apigatewayv2_route" "tags" {
   target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
+resource "aws_apigatewayv2_route" "costs_by_tag" {
+  api_id    = aws_apigatewayv2_api.dashboard.id
+  route_key = "GET /costs-by-tag"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "coverage" {
+  api_id    = aws_apigatewayv2_api.dashboard.id
+  route_key = "GET /coverage"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "waste" {
+  api_id    = aws_apigatewayv2_api.dashboard.id
+  route_key = "GET /waste"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
 resource "aws_lambda_permission" "api_gateway" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
@@ -407,9 +440,9 @@ resource "aws_lambda_function" "llm_ingester" {
 
   environment {
     variables = {
-      TABLE_NAME              = aws_dynamodb_table.dashboard.name
-      LLM_GATEWAY_TABLE_NAME  = var.llm_gateway_table_name
-      AWS_REGION_VAR          = var.region
+      TABLE_NAME             = aws_dynamodb_table.dashboard.name
+      LLM_GATEWAY_TABLE_NAME = var.llm_gateway_table_name
+      AWS_REGION_VAR         = var.region
     }
   }
 
